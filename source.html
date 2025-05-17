@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamic Skybox Racer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/addons/p5.sound.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Orbitron', sans-serif;
+        }
+        
+        #canvas-container {
+            width: 100%;
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: center;
+            position: relative;
+        }
+        
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-size: 16px;
+            pointer-events: none;
+            text-shadow: 0 0 5px rgba(0,0,0,0.8);
+        }
+        
+        #start-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background-color: rgba(0,0,0,0.7);
+            color: white;
+            z-index: 100;
+        }
+        
+        #start-screen h1 {
+            font-size: 3em;
+            margin-bottom: 20px;
+            color: #4fc3f7;
+            text-shadow: 0 0 10px rgba(79, 195, 247, 0.5);
+        }
+        
+        #start-screen p {
+            font-size: 1.2em;
+            max-width: 600px;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        #start-button {
+            padding: 15px 30px;
+            font-size: 1.2em;
+            background: linear-gradient(45deg, #4fc3f7, #2196f3);
+            border: none;
+            border-radius: 5px;
+            color: white;
+            cursor: pointer;
+            font-family: 'Orbitron', sans-serif;
+            transition: all 0.3s;
+        }
+        
+        #start-button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 15px rgba(79, 195, 247, 0.7);
+        }
+        
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 1.5em;
+            z-index: 1000;
+        }
+    </style>
+
+<base target="_self">
+
+
+    <div id="canvas-container"></div>
+    <div id="ui">
+        <div id="speed">Speed: 0</div>
+        <div id="time">Time: 0</div>
+        <div id="day-cycle">Time of Day: Dawn</div>
+    </div>
+    
+    <div id="start-screen">
+        <h1>SKYBOX RACER</h1>
+        <p>Experience the dynamic day-night cycle as you race through the minimalist landscape. Watch the sky transform from bright daylight to starry night and back again.</p>
+        <button id="start-button">START RACE</button>
+    </div>
+    
+    <div id="loading">Loading...</div>
+    
+    <script>
+        let gameState = 'loading';
+        let audioInitialized = false;
+        let audioLoaded = false;
+        let car;
+        let road = [];
+        let skyColors = [];
+        let sunPosition;
+        let stars = [];
+        let timeOfDay = 0;
+        let speed = 0;
+        let maxSpeed = 10;
+        let acceleration = 0.05;
+        let deceleration = 0.02;
+        let roadWidth = 400;
+        let roadSegments = 1000;
+        let segmentLength = 100;
+        let cameraZ = 0;
+        let fogDensity = 0;
+        let engineSound;
+        let ambientSound;
+        let lastTime = 0;
+        let startTime = 0;
+        let lapCount = 0;
+        let curve = 0;
+        let curveTarget = 0;
+        
+        function preload() {
+            // No assets to preload since we're generating everything procedurally
+        }
+        
+        function setup() {
+            const canvas = createCanvas(windowWidth, windowHeight, WEBGL);
+            canvas.parent('canvas-container');
+            
+            // Initialize game elements
+            initSkyColors();
+            initStars();
+            initRoad();
+            
+            car = {
+                x: 0,
+                y: 0,
+                z: 0,
+                speed: 0,
+                maxSpeed: 10,
+                acceleration: 0.05,
+                deceleration: 0.02,
+                steering: 0,
+                maxSteering: 0.1,
+                rotation: 0
+            };
+            
+            // Setup audio context (but don't initialize yet)
+            getAudioContext().suspend();
+            
+            // Hide loading screen
+            document.getElementById('loading').style.display = 'none';
+            
+            // Set initial game state
+            gameState = 'start';
+        }
+        
+        function initSkyColors() {
+            // Define color palette for day-night cycle
+            skyColors = [
+                color(10, 20, 40),    // Deep night
+                color(30, 50, 90),     // Late night
+                color(50, 80, 120),    // Early dawn
+                color(120, 160, 220),  // Dawn
+                color(140, 200, 255),  // Morning
+                color(100, 180, 255),  // Midday
+                color(255, 180, 100),  // Sunset
+                color(200, 100, 80),   // Dusk
+                color(60, 40, 80),     // Twilight
+                color(20, 30, 60)      // Night
+            ];
+        }
+        
+        function initStars() {
+            stars = [];
+            for (let i = 0; i < 500; i++) {
+                stars.push({
+                    x: random(-2000, 2000),
+                    y: random(-2000, 2000),
+                    z: random(-2000, 2000),
+                    size: random(1, 3),
+                    brightness: random(0.3, 1)
+                });
+            }
+        }
+        
+        function initRoad() {
+            road = [];
+            for (let i = 0; i < roadSegments; i++) {
+                road.push({
+                    z: i * segmentLength,
+                    curve: 0,
+                    y: 0
+                });
+            }
+            
+            // Add some curves to the road
+            for (let i = 0; i < 5; i++) {
+                const start = floor(random(roadSegments * 0.2, roadSegments * 0.8));
+                const length = floor(random(roadSegments * 0.1, roadSegments * 0.3));
+                const curveAmount = random(-0.02, 0.02);
+                
+                for (let j = start; j < start + length && j < roadSegments; j++) {
+                    road[j].curve = curveAmount * (1 - (j - start) / length);
+                }
+            }
+            
+            // Add some hills
+            for (let i = 0; i < 3; i++) {
+                const start = floor(random(roadSegments * 0.2, roadSegments * 0.8));
+                const length = floor(random(roadSegments * 0.1, roadSegments * 0.2));
+                const hillHeight = random(-50, 50);
+                
+                for (let j = start; j < start + length && j < roadSegments; j++) {
+                    const progress = (j - start) / length;
+                    road[j].y = hillHeight * sin(progress * PI);
+                }
+            }
+        }
+        
+        function startAudio() {
+            if (!audioInitialized) {
+                userStartAudio();
+                audioInitialized = true;
+                
+                // Create engine sound
+                engineSound = new p5.Oscillator('sawtooth');
+                engineSound.amp(0);
+                engineSound.start();
+                
+                // Create ambient sound
+                ambientSound = new p5.Noise('brown');
+                ambientSound.amp(0.1);
+                ambientSound.start();
+                
+                audioLoaded = true;
+            }
+        }
+        
+        function startGame() {
+            gameState = 'playing';
+            startTime = millis();
+            loop();
+        }
+        
+        function draw() {
+            if (gameState === 'loading') return;
+            
+            const currentTime = millis();
+            const deltaTime = currentTime - lastTime;
+            lastTime = currentTime;
+            
+            // Update game state
+            if (gameState === 'playing') {
+                update(deltaTime);
+            }
+            
+            // Render scene
+            render();
+            
+            // Update UI
+            updateUI();
+        }
+        
+        function update(deltaTime) {
+            // Update time of day (full cycle every 2 minutes)
+            timeOfDay = ((millis() - startTime) / 120000) % 1;
+            
+            // Update car speed based on input
+            if (keyIsDown(UP_ARROW) || keyIsDown(87)) { // W or Up
+                car.speed = min(car.speed + car.acceleration, car.maxSpeed);
+            } else if (keyIsDown(DOWN_ARROW) || keyIsDown(83)) { // S or Down
+                car.speed = max(car.speed - car.deceleration * 2, -car.maxSpeed * 0.5);
+            } else {
+                // Natural deceleration
+                if (car.speed > 0) {
+                    car.speed = max(car.speed - car.deceleration, 0);
+                } else if (car.speed < 0) {
+                    car.speed = min(car.speed + car.deceleration, 0);
+                }
+            }
+            
+            // Update steering
+            if (keyIsDown(LEFT_ARROW) || keyIsDown(65)) { // A or Left
+                car.steering = max(car.steering - 0.01, -car.maxSteering);
+            } else if (keyIsDown(RIGHT_ARROW) || keyIsDown(68)) { // D or Right
+                car.steering = min(car.steering + 0.01, car.maxSteering);
+            } else {
+                // Center steering
+                if (car.steering > 0) {
+                    car.steering = max(car.steering - 0.005, 0);
+                } else if (car.steering < 0) {
+                    car.steering = min(car.steering + 0.005, 0);
+                }
+            }
+            
+            // Update car position
+            car.x += car.steering * car.speed * 10;
+            car.z += car.speed;
+            
+            // Keep car on road
+            car.x = constrain(car.x, -roadWidth/2, roadWidth/2);
+            
+            // Update camera position
+            cameraZ = car.z - 500;
+            
+            // Update audio
+            if (audioLoaded) {
+                engineSound.freq(100 + abs(car.speed) * 30);
+                engineSound.amp(min(abs(car.speed) / car.maxSpeed, 0.3));
+                
+                // Update ambient sound based on time of day
+                const nightFactor = 1 - abs(timeOfDay - 0.5) * 2; // 0 at midday, 1 at midnight
+                ambientSound.amp(0.1 + nightFactor * 0.1);
+            }
+            
+            // Check for lap completion
+            if (car.z > roadSegments * segmentLength) {
+                car.z = 0;
+                lapCount++;
+            }
+        }
+        
+        function render() {
+            // Clear canvas
+            clear();
+            
+            // Set background based on time of day
+            const bgColorIndex = floor(timeOfDay * (skyColors.length - 1));
+            const bgColorNext = (bgColorIndex + 1) % skyColors.length;
+            const bgColorProgress = (timeOfDay * (skyColors.length - 1)) % 1;
+            
+            const bgColor = lerpColor(
+                skyColors[bgColorIndex],
+                skyColors[bgColorNext],
+                bgColorProgress
+            );
+            
+            background(bgColor);
+            
+            // Set fog based on time of day
+            const fogColor = lerpColor(
+                color(200, 220, 255),
+                color(10, 15, 30),
+                timeOfDay > 0.5 ? (timeOfDay - 0.5) * 2 : 0
+            );
+            
+            fogDensity = 0.001 + timeOfDay * 0.002;
+            
+            // Set camera
+            const cameraY = -100 + sin(timeOfDay * TWO_PI) * 50;
+            camera(0, cameraY, cameraZ, 0, cameraY, cameraZ + 1000, 0, 1, 0);
+            
+            // Draw sky elements
+            drawSunMoon();
+            drawStars();
+            
+            // Draw road
+            drawRoad();
+            
+            // Draw car
+            drawCar();
+        }
+        
+        function drawSunMoon() {
+            push();
+            noStroke();
+            
+            // Calculate sun/moon position based on time of day
+            const angle = timeOfDay * TWO_PI;
+            const distance = 1000;
+            const x = cos(angle) * distance;
+            const y = sin(angle) * distance;
+            const z = cameraZ + 2000;
+            const size = 100 + sin(angle) * 20;
+            
+            // Draw sun or moon
+            if (timeOfDay < 0.25 || timeOfDay > 0.75) {
+                // Moon
+                fill(240, 240, 255);
+                translate(x, y, z);
+                sphere(size * 0.8);
+            } else {
+                // Sun
+                fill(255, 255 - timeOfDay * 100, 200 - timeOfDay * 150);
+                translate(x, y, z);
+                sphere(size);
+                
+                // Sun rays
+                if (timeOfDay > 0.2 && timeOfDay < 0.3) {
+                    // Sunrise glow
+                    for (let i = 0; i < 10; i++) {
+                        push();
+                        rotateY(i * PI/5);
+                        rotateX(PI/4);
+                        fill(255, 200, 100, 50);
+                        cone(size * 2, size * 4);
+                        pop();
+                    }
+                } else if (timeOfDay > 0.7 && timeOfDay < 0.8) {
+                    // Sunset glow
+                    for (let i = 0; i < 10; i++) {
+                        push();
+                        rotateY(i * PI/5);
+                        rotateX(-PI/4);
+                        fill(255, 100, 50, 50);
+                        cone(size * 2, size * 4);
+                        pop();
+                    }
+                }
+            }
+            
+            pop();
+        }
+        
+        function drawStars() {
+            push();
+            noStroke();
+            
+            // Only show stars at night
+            const starVisibility = 1 - constrain(abs(timeOfDay - 0.5) * 2, 0, 1);
+            
+            if (starVisibility > 0) {
+                for (let star of stars) {
+                    const brightness = star.brightness * starVisibility * 255;
+                    fill(brightness);
+                    
+                    push();
+                    translate(star.x, star.y, star.z + cameraZ);
+                    sphere(star.size);
+                    pop();
+                }
+            }
+            
+            pop();
+        }
+        
+        function drawRoad() {
+            push();
+            noStroke();
+            
+            // Find segment closest to camera
+            let baseSegment = 0;
+            while (baseSegment < roadSegments && road[baseSegment].z < cameraZ) {
+                baseSegment++;
+            }
+            
+            // Draw road segments
+            for (let n = 0; n < 100; n++) {
+                const segment = (baseSegment + n) % roadSegments;
+                const nextSegment = (segment + 1) % roadSegments;
+                
+                if (!road[segment] || !road[nextSegment]) continue;
+                
+                // Calculate positions
+                const z1 = road[segment].z - cameraZ;
+                const z2 = road[nextSegment].z - cameraZ;
+                
+                // Only draw segments in front of camera
+                if (z2 <= 0) continue;
+                
+                // Calculate perspective
+                const scale1 = 1000 / (1000 + z1);
+                const scale2 = 1000 / (1000 + z2);
+                
+                // Calculate road edges
+                const x1 = road[segment].curve * 1000 * scale1;
+                const x2 = road[nextSegment].curve * 1000 * scale2;
+                
+                const y1 = road[segment].y * scale1;
+                const y2 = road[nextSegment].y * scale2;
+                
+                const w1 = roadWidth * scale1;
+                const w2 = roadWidth * scale2;
+                
+                // Set color based on segment
+                let segmentColor;
+                if (n < 10) {
+                    // Close segments - lighter
+                    segmentColor = lerpColor(
+                        color(100),
+                        color(200),
+                        n / 10
+                    );
+                } else {
+                    // Far segments - darker
+                    segmentColor = color(50);
+                }
+                
+                // Add time-of-day tint
+                const timeTint = lerpColor(
+                    color(255, 255, 200),
+                    color(50, 50, 100),
+                    timeOfDay > 0.5 ? (timeOfDay - 0.5) * 2 : 0
+                );
+                
+                segmentColor = lerpColor(
+                    segmentColor,
+                    timeTint,
+                    0.3
+                );
+                
+                fill(segmentColor);
+                
+                // Draw road segment
+                beginShape();
+                vertex(-w1/2 + x1, y1, -z1);
+                vertex(-w2/2 + x2, y2, -z2);
+                vertex(w2/2 + x2, y2, -z2);
+                vertex(w1/2 + x1, y1, -z1);
+                endShape(CLOSE);
+                
+                // Draw road markings
+                if (n % 5 === 0) {
+                    const markW1 = w1 * 0.05;
+                    const markW2 = w2 * 0.05;
+                    
+                    fill(255, 255 * (1 - n/100));
+                    beginShape();
+                    vertex(-markW1/2 + x1, y1 + 1, -z1);
+                    vertex(-markW2/2 + x2, y2 + 1, -z2);
+                    vertex(markW2/2 + x2, y2 + 1, -z2);
+                    vertex(markW1/2 + x1, y1 + 1, -z1);
+                    endShape(CLOSE);
+                }
+                
+                // Draw side stripes
+                fill(150);
+                beginShape();
+                vertex(-w1/2 - 10 * scale1 + x1, y1, -z1);
+                vertex(-w2/2 - 10 * scale2 + x2, y2, -z2);
+                vertex(-w2/2 + x2, y2, -z2);
+                vertex(-w1/2 + x1, y1, -z1);
+                endShape(CLOSE);
+                
+                beginShape();
+                vertex(w1/2 + x1, y1, -z1);
+                vertex(w2/2 + x2, y2, -z2);
+                vertex(w2/2 + 10 * scale2 + x2, y2, -z2);
+                vertex(w1/2 + 10 * scale1 + x1, y1, -z1);
+                endShape(CLOSE);
+            }
+            
+            pop();
+        }
+        
+        function drawCar() {
+            push();
+            
+            // Calculate car position in 3D space
+            const carZ = car.z - cameraZ;
+            if (carZ <= 0 || carZ > 2000) {
+                pop();
+                return;
+            }
+            
+            const scale = 1000 / (1000 + carZ);
+            const x = car.x * scale;
+            const y = 0;
+            const z = -carZ;
+            
+            translate(x, y, z);
+            rotateY(car.steering * 2);
+            
+            // Car body
+            fill(255, 0, 0);
+            box(50 * scale, 30 * scale, 80 * scale);
+            
+            // Car roof
+            push();
+            translate(0, -20 * scale, 0);
+            box(40 * scale, 10 * scale, 60 * scale);
+            pop();
+            
+            // Wheels
+            fill(20);
+            push();
+            translate(-30 * scale, 20 * scale, -40 * scale);
+            rotateX(frameCount * 0.1 * car.speed);
+            cylinder(10 * scale, 15 * scale);
+            pop();
+            
+            push();
+            translate(30 * scale, 20 * scale, -40 * scale);
+            rotateX(frameCount * 0.1 * car.speed);
+            cylinder(10 * scale, 15 * scale);
+            pop();
+            
+            push();
+            translate(-30 * scale, 20 * scale, 40 * scale);
+            rotateX(frameCount * 0.1 * car.speed);
+            cylinder(10 * scale, 15 * scale);
+            pop();
+            
+            push();
+            translate(30 * scale, 20 * scale, 40 * scale);
+            rotateX(frameCount * 0.1 * car.speed);
+            cylinder(10 * scale, 15 * scale);
+            pop();
+            
+            // Headlights
+            if (timeOfDay < 0.25 || timeOfDay > 0.75) {
+                fill(255, 255, 200);
+                push();
+                translate(-15 * scale, 0, 50 * scale);
+                sphere(5 * scale);
+                pop();
+                
+                push();
+                translate(15 * scale, 0, 50 * scale);
+                sphere(5 * scale);
+                pop();
+            }
+            
+            pop();
+        }
+        
+        function updateUI() {
+            document.getElementById('speed').textContent = `Speed: ${abs(car.speed).toFixed(1)}`;
+            
+            const elapsed = (millis() - startTime) / 1000;
+            document.getElementById('time').textContent = `Time: ${elapsed.toFixed(1)}s`;
+            
+            // Update time of day display
+            let timeName;
+            if (timeOfDay < 0.1) timeName = "Midnight";
+            else if (timeOfDay < 0.25) timeName = "Early Morning";
+            else if (timeOfDay < 0.35) timeName = "Dawn";
+            else if (timeOfDay < 0.45) timeName = "Morning";
+            else if (timeOfDay < 0.55) timeName = "Midday";
+            else if (timeOfDay < 0.65) timeName = "Afternoon";
+            else if (timeOfDay < 0.75) timeName = "Sunset";
+            else if (timeOfDay < 0.85) timeName = "Twilight";
+            else if (timeOfDay < 0.95) timeName = "Evening";
+            else timeName = "Night";
+            
+            document.getElementById('day-cycle').textContent = `Time of Day: ${timeName}`;
+        }
+        
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+        }
+        
+        function keyPressed() {
+            if (key === ' ' && gameState === 'start') {
+                startGame();
+                startAudio();
+                document.getElementById('start-screen').style.display = 'none';
+            }
+            
+            if (key === 'p' || key === 'P') {
+                if (gameState === 'playing') {
+                    gameState = 'paused';
+                    noLoop();
+                } else if (gameState === 'paused') {
+                    gameState = 'playing';
+                    loop();
+                }
+            }
+        }
+        
+        // Start button click handler
+        document.getElementById('start-button').addEventListener('click', function() {
+            startGame();
+            startAudio();
+            document.getElementById('start-screen').style.display = 'none';
+        });
+        
+        // Prevent context menu
+        document.addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+        });
+    </script>
+
+              
+          
+                
+          
+              
